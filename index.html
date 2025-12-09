@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EEF Manager — Firebase Final</title>
+
+    <!-- Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <!-- External Stylesheet -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <!-- Toast container -->
+    <div id="toasts"></div>
+
+    <!-- Auth Overlay -->
+    <div id="auth">
+        <div class="auth-box">
+            <div class="auth-brand">EEF Manager</div>
+            <p class="auth-subtitle">Sign in with your EEF credentials</p>
+            <div class="auth-input-group">
+                <label for="authEmail">Email</label>
+                <input id="authEmail" type="email" placeholder="you@colorado.edu">
+            </div>
+            <div class="auth-input-group">
+                <label for="authPassword">Password</label>
+                <input id="authPassword" type="password" placeholder="••••••••">
+            </div>
+            <button id="authGo" class="btn btn-primary auth-btn">Sign in</button>
+            <div id="authErr" class="auth-error" style="display:none;">Incorrect email or password</div>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header>
+        <div class="bar flex-between">
+            <div class="flex gap-14" style="align-items:center">
+                <div class="brand">EEF Manager</div>
+                <div class="tabs">
+                    <button id="tab-Dashboard" class="active">Dashboard</button>
+                    <button id="tab-Data">Data</button>
+                    <button id="tab-Survey">Survey</button>
+                    <button id="tab-Tracker">Tracker</button>
+                    <button id="tab-Approved">Approved</button>
+                    <button id="tab-Admin" data-admin-only="true">Admin</button>
+                </div>
+            </div>
+            <!-- Dataset selector gets injected here by JS -->
+        </div>
+    </header>
+
+    <!-- Main -->
+    <main style="max-width:1400px; margin:0 auto; padding:22px 20px">
+        <!-- Dashboard -->
+        <section id="view-Dashboard">
+            <div class="card">
+                <div class="card-header flex-between flex-wrap">
+                    <strong>Overview</strong>
+                </div>
+                <div class="card-body">
+                    <div class="stats">
+                        <div class="stat">
+                            <div class="stat-label">Total Proposals</div>
+                            <div id="st-proposals" class="stat-value">0</div>
+                            <div class="stat-sub">This dataset</div>
+                        </div>
+
+                        <div class="stat">
+                            <div class="stat-label">Approved / Partial / None</div>
+                            <div id="st-status" class="stat-value">0 / 0 / 0</div>
+                            <div class="stat-sub">Approved tab</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">Notes Submitted</div>
+                            <div id="st-notes" class="stat-value">0</div>
+                            <div class="stat-sub">Survey responses</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">Avg. Submission Amount</div>
+                            <div id="st-avg" class="stat-value">$0</div>
+                            <div class="stat-sub">From dataset</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">Total Grant Given</div>
+                            <div id="st-granted" class="stat-value">$0</div>
+                            <div class="stat-sub">Approved tab</div>
+                        </div>
+                    </div>
+                </div>
+                <!-- === Reviewer Dashboard (collapsible) === -->
+                <div class="card mt-16">
+                    <div class="card-header flex-between">
+                        <strong>Reviewer Progress</strong>
+                        <div class="text-muted text-sm">Click a reviewer to see assigned proposals & due dates</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-wrap scrollbar">
+                            <table id="reviewer-table" style="min-width:100%">
+                                <thead>
+                                    <tr>
+                                        <th><div class="th-inner">Reviewer</div></th>
+                                        <th><div class="th-inner">Submitted / Assigned</div></th>
+                                        <th><div class="th-inner">Notes (Last 7 Days)</div></th>
+                                        <th><div class="th-inner">Progress</div></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="reviewer-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Data -->
+        <section id="view-Data" class="hidden">
+            <div class="card">
+                <div class="card-header flex-between flex-wrap">
+                    <strong>Dataset</strong>
+                    <div class="flex gap-8 flex-wrap" style="align-items:center">
+                        <input id="xlsx" type="file" accept=".xlsx,.xls,.xlsm">
+                        <button id="upload" class="btn btn-primary btn-sm">Upload XLSX</button>
+                        <button id="dl-csv" class="btn btn-sm">Download CSV</button>
+                        <button id="del-tab" class="btn btn-danger btn-sm" data-admin-only="true">Delete Tab</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="w-260 mb-12" id="match-col-wrap" data-admin-only="true">
+                        <label>Match Column</label>
+                        <div style="display:flex;gap:8px;align-items:center">
+                          <select id="match-col" style="flex:1"></select>
+                          <div id="match-controls" class="match-controls"></div>
+                        </div>
+                    </div>
+                    <div id="data-toolbar" class="data-toolbar"></div>
+                    <div class="table-wrap scrollbar">
+                        <table id="data-table">
+                            <thead id="data-head"></thead>
+                            <tbody id="data-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Survey -->
+        <section id="view-Survey" class="hidden">
+            <div class="card">
+                <div class="card-body" id="survey-container"></div>
+            </div>
+        </section>
+
+        <!-- Tracker -->
+        <section id="view-Tracker" class="hidden">
+            <div class="card">
+                <div id="tracker-container"></div>
+            </div>
+        </section>
+
+        <!-- Approved -->
+        <section id="view-Approved" class="hidden">
+            <div class="card">
+                <div id="approved-container"></div>
+            </div>
+        </section>
+
+        <!-- Admin -->
+        <section id="view-Admin" class="hidden">
+            <div class="card">
+                <div class="card-header flex-between flex-wrap" style="align-items:center">
+                    <strong>Admin Settings</strong>
+                    <div class="text-sm text-muted">Manage admins and reviewer directory</div>
+                </div>
+                <div class="card-body" style="display:flex;flex-wrap:wrap;gap:16px;">
+                    <div class="card" style="flex:1 1 320px;min-width:320px;">
+                        <div class="card-header flex-between">
+                            <strong>Admin Emails</strong>
+                            <div class="text-sm text-muted" id="admin-emails-meta">—</div>
+                        </div>
+                        <div class="card-body">
+                            <div id="admin-emails-list" class="admin-list"></div>
+                            <div class="flex gap-8 mt-12" style="justify-content:flex-end">
+                                <button id="admin-emails-add" class="btn btn-primary btn-sm">Add Admin Email</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card" style="flex:1 1 320px;min-width:320px;">
+                        <div class="card-header flex-between">
+                            <strong>Reviewer Directory</strong>
+                            <div class="text-sm text-muted" id="admin-reviewer-meta">—</div>
+                        </div>
+                        <div class="card-body">
+                            <div id="admin-reviewers-list" class="admin-list"></div>
+                            <div class="flex gap-8 mt-12" style="justify-content:flex-end">
+                                <button id="admin-reviewers-add" class="btn btn-primary btn-sm">Add Reviewer</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Details Modal -->
+    <div id="detail" class="hidden"></div>
+
+    <!-- Auto Assign Modal -->
+    <div id="auto-assign-modal" class="auto-modal hidden">
+        <div class="auto-modal-card">
+            <div class="auto-modal-header">
+                <div>
+                    <h3>Automatic Reviewer Assignment</h3>
+                    <p>Provide meeting dates and reviewer pool to assign proposals.</p>
+                </div>
+                <button id="auto-close" class="close-x">&times;</button>
+            </div>
+            <div class="auto-modal-body">
+                <div class="auto-field">
+                    <label>Projected Meeting Dates (one per line)</label>
+                    <textarea id="auto-dates" placeholder="e.g. 2025-02-05&#10;2025-02-07&#10;2025-02-12"></textarea>
+                    <small>Dates should be in YYYY-MM-DD format. Ordered list determines assignment sequence.</small>
+                </div>
+                <div class="auto-columns">
+                    <div class="auto-field">
+                        <label>Reviewers per Proposal</label>
+                        <input id="auto-count" type="number" min="1" max="5" value="2">
+                    </div>
+                    <div class="auto-field">
+                        <label>Reviewer Pool (one per line)</label>
+                        <textarea id="auto-reviewers" placeholder="Reviewer 1&#10;Reviewer 2&#10;Reviewer 3"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="auto-modal-actions">
+                <button id="auto-clear" class="btn btn-outline btn-danger">Clear All Assignments</button>
+                <button id="auto-cancel" class="btn btn-outline">Cancel</button>
+                <button id="auto-run" class="btn btn-primary">Run Auto Assign</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Add Modal -->
+    <div id="admin-modal" class="auto-modal hidden">
+        <div class="auto-modal-card">
+            <div class="auto-modal-header">
+                <div>
+                    <h3 id="admin-modal-title">Add Entry</h3>
+                    <p id="admin-modal-subtitle" class="text-sm text-muted"></p>
+                </div>
+                <button id="admin-modal-close" class="close-x">&times;</button>
+            </div>
+            <div class="auto-modal-body">
+                <div class="auto-field" id="admin-name-wrap">
+                    <label>Name</label>
+                    <input id="admin-modal-name" type="text" placeholder="Reviewer Name">
+                </div>
+                <div class="auto-field">
+                    <label>Email</label>
+                    <input id="admin-modal-email" type="email" placeholder="person@example.edu">
+                </div>
+            </div>
+            <div class="auto-modal-actions">
+                <button id="admin-modal-cancel" class="btn btn-outline">Cancel</button>
+                <button id="admin-modal-save" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript Modules -->
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

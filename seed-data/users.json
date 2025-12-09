@@ -1,0 +1,18 @@
+[
+    {
+        "email": "reviewer1@example.edu",
+        "password": "TempPass123!",
+        "displayName": "Reviewer One",
+        "claims": {
+            "role": "reviewer"
+        }
+    },
+    {
+        "email": "coordinator@example.edu",
+        "password": "TempPass123!",
+        "displayName": "Coordinator",
+        "claims": {
+            "role": "admin"
+        }
+    }
+]
