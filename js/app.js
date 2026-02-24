@@ -732,22 +732,14 @@ function bindUI() {
     };
 
     // Admin settings
-    // Admin settings
-const addAdminBtn = $("admin-emails-add");
-if (addAdminBtn) addAdminBtn.onclick = () => openAdminEntryModal("admin");
-
-const addReviewerBtn = $("admin-reviewers-add");
-if (addReviewerBtn) addReviewerBtn.onclick = () => openAdminEntryModal("reviewer");
-
-// ✅ BIND IMPORT BUTTON HERE
-const importReviewerBtn = $("admin-reviewers-import");
-if (importReviewerBtn) importReviewerBtn.onclick = () => importReviewerEmailsBlankNames();
-
-const adminEmailList = $("admin-emails-list");
-if (adminEmailList) adminEmailList.onclick = handleAdminListClick;
-
-const reviewerList = $("admin-reviewers-list");
-if (reviewerList) reviewerList.onclick = handleReviewerListClick;
+    const addAdminBtn = $("admin-emails-add");
+    if (addAdminBtn) addAdminBtn.onclick = () => openAdminEntryModal("admin");
+    const addReviewerBtn = $("admin-reviewers-add");
+    if (addReviewerBtn) addReviewerBtn.onclick = () => openAdminEntryModal("reviewer");
+    const adminEmailList = $("admin-emails-list");
+    if (adminEmailList) adminEmailList.onclick = handleAdminListClick;
+    const reviewerList = $("admin-reviewers-list");
+    if (reviewerList) reviewerList.onclick = handleReviewerListClick;
     ["admin-modal-close", "admin-modal-cancel"].forEach(id => {
         const btn = $(id);
         if (btn) btn.onclick = closeAdminEntryModal;
