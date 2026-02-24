@@ -748,77 +748,112 @@ export async function runAutoAssign(app, rerenderTracker, rerenderDashboard) {
 
   if (!projects.length) return notify("No visible projects to assign.", "error");
 
-  const capacityPerDate = Math.floor(reviewerPool.length / reviewerCount);
-  if (capacityPerDate <= 0)
-    return notify("Reviewer pool must be larger than reviewers-per-proposal.", "error");
+  // --- STEP A: spread proposals evenly across weeks (round-robin) ---
+  const weeks = meetingDates.length;
+  const weekBuckets = Array.from({ length: weeks }, () => []);
+  projects.forEach((p, i) => weekBuckets[i % weeks].push(p));
 
-  const maxAssignable = meetingDates.length * capacityPerDate;
-  const assignableProjects = projects.slice(0, maxAssignable);
-  const overflowProjects = projects.slice(maxAssignable);
+  // --- tracking structures ---
+  const totalLoad = {};               // reviewer -> total assigned proposals
+  const weekLoad = {};                // weekIndex -> reviewer -> assigned proposals in that week
+  const pairCount = {};               // "a|b" -> number of times paired together
 
-  const chunkSize = Math.max(1, Math.ceil(assignableProjects.length / meetingDates.length));
-  let currentDateIndex = 0;
-  let chunkCounter = 0;
+  reviewerPool.forEach((r) => (totalLoad[r] = 0));
+  for (let w = 0; w < weeks; w++) {
+    weekLoad[w] = {};
+    reviewerPool.forEach((r) => (weekLoad[w][r] = 0));
+  }
 
-  // Balance by always picking reviewers with the lowest current load (tie-broken by rotation)
-  const assignCounts = {};
-  reviewerPool.forEach((name) => (assignCounts[name] = 0));
-  let rotateOffset = 0;
+  const keyPair = (a, b) => {
+    const [x, y] = [a, b].sort();
+    return `${x}|${y}`;
+  };
 
-  const getNextCombo = () => {
-    const scored = reviewerPool.map((name, idx) => ({
-      name,
-      load: assignCounts[name] || 0,
-      order: (idx + rotateOffset) % reviewerPool.length,
-    }));
+  // score knobs (tunable)
+  const W_TOTAL = 10;     // pushes global balance hardest
+  const W_WEEK = 7;       // pushes weekly balance
+  const W_PAIR = 4;       // reduces repeated pairings
+  const W_TIE = 0.05;     // tiny randomness to avoid deterministic “same every time”
 
-    scored.sort((a, b) => {
-      if (a.load !== b.load) return a.load - b.load;
-      return a.order - b.order;
+  const pickReviewersForProject = (weekIndex) => {
+    const chosen = [];
+
+    while (chosen.length < reviewerCount) {
+      let best = null;
+      let bestScore = Infinity;
+
+      for (const cand of reviewerPool) {
+        if (chosen.includes(cand)) continue;
+
+        // pair penalty vs already-chosen reviewers
+        let pairPenalty = 0;
+        for (const already of chosen) {
+          const k = keyPair(cand, already);
+          pairPenalty += pairCount[k] || 0;
+        }
+
+        const score =
+          W_TOTAL * (totalLoad[cand] || 0) +
+          W_WEEK * (weekLoad[weekIndex][cand] || 0) +
+          W_PAIR * pairPenalty +
+          (Math.random() * W_TIE); // tiny tie-break randomness
+
+        if (score < bestScore) {
+          bestScore = score;
+          best = cand;
+        }
+      }
+
+      // should never happen, but guard anyway
+      if (!best) break;
+
+      chosen.push(best);
+    }
+
+    // update counts
+    chosen.forEach((r) => {
+      totalLoad[r] = (totalLoad[r] || 0) + 1;
+      weekLoad[weekIndex][r] = (weekLoad[weekIndex][r] || 0) + 1;
     });
 
-    const chosen = scored.slice(0, reviewerCount).map((s) => s.name);
-    chosen.forEach((n) => (assignCounts[n] = (assignCounts[n] || 0) + 1));
-    rotateOffset = (rotateOffset + 1) % reviewerPool.length;
+    // update pair counts
+    for (let i = 0; i < chosen.length; i++) {
+      for (let j = i + 1; j < chosen.length; j++) {
+        const k = keyPair(chosen[i], chosen[j]);
+        pairCount[k] = (pairCount[k] || 0) + 1;
+      }
+    }
 
     return chosen;
   };
 
+  // --- assign ---
   const newAssignments = {};
   const dueSaves = [];
 
-  assignableProjects.forEach((project) => {
-    if (chunkCounter >= chunkSize && currentDateIndex < meetingDates.length - 1) {
-      currentDateIndex++;
-      chunkCounter = 0;
-    }
+  for (let w = 0; w < weeks; w++) {
+    const dueDate = meetingDates[w];
+    const bucket = weekBuckets[w];
 
-    const dueDate = meetingDates[currentDateIndex];
-    chunkCounter++;
+    bucket.forEach((project) => {
+      const reviewers = pickReviewersForProject(w);
+      newAssignments[project] = reviewers;
 
-    const reviewers = getNextCombo();
-    newAssignments[project] = reviewers;
+      app.proposalDue[project] = dueDate;
+      dueSaves.push(storage.saveProposalField(app.selectedId, project, { dueDate }));
+    });
+  }
 
-    app.proposalDue[project] = dueDate;
-    dueSaves.push(storage.saveProposalField(app.selectedId, project, { dueDate }));
-  });
-
-  // Overflow projects: unassigned and no date
-  overflowProjects.forEach((project) => {
-    newAssignments[project] = [];
-  });
-
-  // Persist overflow marker
-  newAssignments.__overflow = overflowProjects;
-  app.assignmentOverflow = new Set(overflowProjects);
+  // no more "overflow" logic needed because we assign ALL projects evenly across dates
+  // (still keep the overflow fields empty for compatibility)
+  newAssignments.__overflow = [];
+  app.assignmentOverflow = new Set();
 
   await Promise.all(dueSaves);
   await storage.saveAssignments(app.selectedId, newAssignments);
 
-  // Assignments for runtime should not include __overflow
   delete newAssignments.__overflow;
   app.assignments = newAssignments;
-
   app.autoAssignConfig = { meetingDates, reviewerCount, reviewerPool };
 
   closeAutoAssignModal();
@@ -826,10 +861,16 @@ export async function runAutoAssign(app, rerenderTracker, rerenderDashboard) {
   if (typeof rerenderTracker === "function") rerenderTracker();
   if (typeof rerenderDashboard === "function") rerenderDashboard();
 
-  const overflowCount = overflowProjects.length;
-  if (overflowCount) {
-    notify(`Assigned ${assignableProjects.length} project(s); ${overflowCount} left unassigned (overflow).`, "warning");
-  } else {
-    notify("Automatic assignment completed.", "success");
-  }
+  // quick summary
+  const loads = reviewerPool
+    .map((r) => ({ r, n: totalLoad[r] || 0 }))
+    .sort((a, b) => b.n - a.n);
+
+  const hi = loads[0]?.n ?? 0;
+  const lo = loads[loads.length - 1]?.n ?? 0;
+
+  notify(
+    `Auto-assign complete. Reviewer load range: ${lo}–${hi}. Weeks: ${meetingDates.length}, Proposals: ${projects.length}.`,
+    "success"
+  );
 }
