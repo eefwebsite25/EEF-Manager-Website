@@ -113,110 +113,140 @@ export function renderTracker(app, renderReviewerDashboard, openDetail) {
 
     const tbody = $("trk-body"); if (!tbody) return;
 
-    // Build rows using safe data attributes (encodeURIComponent) to avoid breaking inline handlers when project names contain quotes / ampersands.
-    tbody.innerHTML = projects.map(p => {
-        const assignees = assigns[p] || [];
-        const survs = app.surveys.filter(s => s.projectName === p);
-        // Use first-name matching for submission detection:
-        const submitters = [...new Set(survs.map(s => s.reviewerName || ""))];
-        const submitterFirstSet = new Set(submitters.map(n => firstName(n)));
-        const notesCount = survs.filter(s => (s.overall || s.lineItems || s.funding)).length;
+   // Build rows as models first, then filter/sort, then render HTML.
+// This makes status + due-date filters and due sorting actually work.
+const rowModels = [];
 
-        const amt = app.proposalAmounts[p];
-        const statusVal = app.proposalStatus[p];
-        const amountFilled = (amt != null && amt !== "" && parseFloat(amt) > 0);
-        const statusFilled = (statusVal != null && statusVal !== "");
+projects.forEach(p => {
+    const assignees = assigns[p] || [];
+    const survs = app.surveys.filter(s => s.projectName === p);
+    const submitters = [...new Set(survs.map(s => s.reviewerName || ""))];
+    const submitterFirstSet = new Set(submitters.map(n => firstName(n)));
+    const notesCount = survs.filter(s => (s.overall || s.lineItems || s.funding)).length;
 
-        const approvedRec = app.approved.data.find(r => r["Project Name"] === p);
+    const amt = app.proposalAmounts[p];
+    const statusVal = app.proposalStatus[p];
+    const amountFilled = (amt != null && amt !== "" && parseFloat(amt) > 0);
+    const statusFilled = (statusVal != null && statusVal !== "");
 
-        // Look up Requested Amount from dataset
-        const tabLocal = app.activeTab;
-        const matchLocal = tabLocal.matchColumn || tabLocal.headers?.[0];
-        const row = (tabLocal.data || []).find(r => String(r[matchLocal] || "").trim() === p) || {};
+    const approvedRec = app.approved.data.find(r => r["Project Name"] === p);
 
-        const reqKey = ["Amount", "Requested Amount", "Amount Requested", "Total Requested",
-            "Submission Amount", "Budget", "Q7"]
-            .find(k => row[k] != null && row[k] !== "");
+    // Look up Requested Amount from dataset
+    const tabLocal = app.activeTab;
+    const matchLocal = tabLocal.matchColumn || tabLocal.headers?.[0];
+    const row = (tabLocal.data || []).find(r => String(r[matchLocal] || "").trim() === p) || {};
 
-        const requested = reqKey
-            ? "$" + Number(String(row[reqKey]).replace(/[^0-9.\-]/g, "") || 0)
-                .toLocaleString(undefined, { maximumFractionDigits: 2 })
-            : "—";
+    const reqKey = ["Amount", "Requested Amount", "Amount Requested", "Total Requested",
+        "Submission Amount", "Budget", "Q7"]
+        .find(k => row[k] != null && row[k] !== "");
 
-        const overflowSet = app.assignmentOverflow || new Set();
-        let label, cls;
-        if (approvedRec) { label = "Approved"; cls = "st-approve"; }
-        else if (overflowSet.has(p)) { label = "Unassigned (Overflow)"; cls = "st-unassigned"; }
-        else if (assignees.length === 0) { label = "Unassigned"; cls = "st-unassigned"; }
-        else if (!amountFilled && !statusFilled && assignees.length > 0 && notesCount >= assignees.length) { label = "Ready for Review"; cls = "st-ready"; }
-        else if (statusFilled) { label = "Waiting Approval"; cls = "st-wait"; }
-        else { label = "Under Review"; cls = "st-under"; }
+    const requested = reqKey
+        ? "$" + Number(String(row[reqKey]).replace(/[^0-9.\-]/g, "") || 0)
+            .toLocaleString(undefined, { maximumFractionDigits: 2 })
+        : "—";
 
-        // === NEW: Feed data to dashboard reviewer summary ===
-        app.trackerData ||= []; // ensure it exists
-        assignees.forEach(name => {
-            if (!name) return;
-            const reviewer = name.trim();
-            // find a submission by comparing first-names (robust when survey stores full name)
-            const submission = survs.find(s => firstName(s.reviewerName) === firstName(reviewer));
-            app.trackerData.push({
-                "Reviewer": reviewer,
-                "Project Name": p,
-                "Status": label,
-                "Due Date": app.proposalDue?.[p] || row["Due Date"] || "",
-                "timestamp": submission?.timestamp || null
-            });
+    const overflowSet = app.assignmentOverflow || new Set();
+    let label, cls;
+    if (approvedRec) { label = "Approved"; cls = "st-approve"; }
+    else if (overflowSet.has(p)) { label = "Unassigned (Overflow)"; cls = "st-unassigned"; }
+    else if (assignees.length === 0) { label = "Unassigned"; cls = "st-unassigned"; }
+    else if (!amountFilled && !statusFilled && assignees.length > 0 && notesCount >= assignees.length) { label = "Ready for Review"; cls = "st-ready"; }
+    else if (statusFilled) { label = "Waiting Approval"; cls = "st-wait"; }
+    else { label = "Under Review"; cls = "st-under"; }
+
+    // normalize stored due (use local yyyy-mm-dd for date input)
+    const dueVal = toLocalYMD(app.proposalDue?.[p] || row["Due Date"] || row.Due || "");
+
+    // ---- APPLY FILTERS (THIS IS THE FIX) ----
+    // Due date filter
+    if (trkDateFilter && dueVal !== trkDateFilter) return;
+
+    // Status filter (filters by the computed tracker label)
+    if (activeStatusFilters.size > 0 && !activeStatusFilters.has(label)) return;
+
+    // === Feed data to dashboard reviewer summary ===
+    app.trackerData ||= [];
+    assignees.forEach(name => {
+        if (!name) return;
+        const reviewer = name.trim();
+        const submission = survs.find(s => firstName(s.reviewerName) === firstName(reviewer));
+        app.trackerData.push({
+            "Reviewer": reviewer,
+            "Project Name": p,
+            "Status": label,
+            "Due Date": app.proposalDue?.[p] || row["Due Date"] || "",
+            "timestamp": submission?.timestamp || null
         });
+    });
 
+    const amtDisp = `
+        <div style="display:flex;flex-direction:column;gap:2px;line-height:1.3">
+            <div><span class="text-muted text-sm">Req:</span> <strong style="color:#10B981">${requested}</strong></div>
+            <div><span class="text-muted text-sm">Given:</span> <strong style="color:#FBBF24">${amountFilled
+            ? "$" + Number(amt).toLocaleString(undefined, { maximumFractionDigits: 2 })
+            : "—"}</strong></div>
+        </div>`;
 
-        // Dual display: Requested vs Given
-        const amtDisp = `
-            <div style="display:flex;flex-direction:column;gap:2px;line-height:1.3">
-                <div><span class="text-muted text-sm">Req:</span> <strong style="color:#10B981">${requested}</strong></div>
-                <div><span class="text-muted text-sm">Given:</span> <strong style="color:#FBBF24">${amountFilled
-                ? "$" + Number(amt).toLocaleString(undefined, { maximumFractionDigits: 2 })
-                : "—"}</strong></div>
-            </div>`;
+    const assigneeHtml = assignees.length
+        ? `<span class="assignees" title="${esc(assignees.join(', '))}" style="display:block;margin-top:6px;color:#94A3B8;font-size:12px">` +
+        assignees.slice(0, 8).map(n => {
+            const aFirst = firstName(n);
+            const submitted = submitterFirstSet.has(aFirst);
+            const style = submitted ? "color:#3B82F6;font-weight:800;text-decoration:underline;cursor:pointer" : "text-decoration:underline;cursor:pointer";
+            return `<span class="assignee-name" data-action="assignee" data-project="${encodeURIComponent(p)}" data-assignee="${encodeURIComponent(n)}" style="${style}">${esc(n)}</span>`;
+        }).join(" ") +
+        (assignees.length > 8 ? ` <span>…</span>` : "") +
+        `</span>`
+        : `<span class="assignees" style="display:block;margin-top:6px;color:#94A3B8;font-size:12px">—</span>`;
 
-        // Build assignee HTML with data attributes and percent-encoding for safety.
-        const assigneeHtml = assignees.length
-            ? `<span class="assignees" title="${esc(assignees.join(', '))}" style="display:block;margin-top:6px;color:#94A3B8;font-size:12px">` +
-            assignees.slice(0, 8).map(n => {
-                const aFirst = firstName(n);
-                const submitted = submitterFirstSet.has(aFirst);
-                // highlight by first-name match; remove checkmark (user requested)
-                const style = submitted ? "color:#3B82F6;font-weight:800;text-decoration:underline;cursor:pointer" : "text-decoration:underline;cursor:pointer";
-                return `<span class="assignee-name" data-action="assignee" data-project="${encodeURIComponent(p)}" data-assignee="${encodeURIComponent(n)}" style="${style}">${esc(n)}</span>`;
-            }).join(" ") +
-            (assignees.length > 8 ? ` <span>…</span>` : "") +
-            `</span>`
-            : `<span class="assignees" style="display:block;margin-top:6px;color:#94A3B8;font-size:12px">—</span>`;
+    const submitBtnHtml = `<button class="btn btn-success btn-sm" data-action="submit">Submit</button>`;
+    const editBtnHtml = app.isAdmin ? `<button class="btn btn-sm btn-outline" data-action="edit-assignees">Assign</button>` : "";
 
-        const submitBtnHtml = `<button class="btn btn-success btn-sm" data-action="submit">Submit</button>`;
-        const editBtnHtml = app.isAdmin ? `<button class="btn btn-sm btn-outline" data-action="edit-assignees">Assign</button>` : "";
-        // normalize stored due (use local yyyy-mm-dd for date input)
-        const dueVal = toLocalYMD(app.proposalDue[p] || row["Due Date"] || row.Due || "");
+    const html = `<tr data-project="${encodeURIComponent(p)}">
+            <td title="${esc(p)}"><span class="proj-name" style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom">${esc(p)}</span></td>
+            <td>${amtDisp}</td>
+            <td>
+                <div><strong>Submitted:</strong> ${submitters.length}</div>
+                <div><strong>Assigned:</strong> ${assignees.length}</div>
+                ${assigneeHtml}
+            </td>
+            <td><span class="status-badge ${cls}">${label}</span></td>
+            <td class="actions-col">
+                <button class="btn btn-sm" data-action="details">Details</button>
+                ${editBtnHtml}
+                ${submitBtnHtml}
+            </td>
+            <td>
+                <input type="date" data-action="due" value="${dueVal}" />
+            </td>
+        </tr>`;
 
-        // store project as encoded value in data attribute to avoid breaking HTML/JS when project contains quotes, ampersands, etc.
-        return `<tr data-project="${encodeURIComponent(p)}">
-                    <td title="${esc(p)}"><span class="proj-name" style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom">${esc(p)}</span></td>
-                    <td>${amtDisp}</td>
-                    <td>
-                        <div><strong>Submitted:</strong> ${submitters.length}</div>
-                        <div><strong>Assigned:</strong> ${assignees.length}</div>
-                        ${assigneeHtml}
-                    </td>
-                    <td><span class="status-badge ${cls}">${label}</span></td>
-                    <td class="actions-col">
-                        <button class="btn btn-sm" data-action="details">Details</button>
-                        ${editBtnHtml}
-                        ${submitBtnHtml}
-                    </td>
-                    <td>
-                        <input type="date" data-action="due" value="${dueVal}" />
-                    </td>
-                </tr>`;
-    }).join("");
+    rowModels.push({
+        project: p,
+        dueVal: dueVal || "",
+        html
+    });
+});
+
+// ---- APPLY SORT (THIS IS THE FIX) ----
+if (dueSort === "asc" || dueSort === "desc") {
+    const sentinel = dueSort === "asc" ? "9999-12-31" : "0000-01-01";
+    rowModels.sort((a, b) => {
+        const da = a.dueVal || sentinel;
+        const db = b.dueVal || sentinel;
+        if (da === db) return a.project.localeCompare(b.project);
+        return dueSort === "asc" ? da.localeCompare(db) : db.localeCompare(da);
+    });
+}
+
+// Render only the filtered/sorted rows
+tbody.innerHTML = rowModels.map(r => r.html).join("");
+
+// Update meta based on displayed rows
+setText("trk-meta", `${rowModels.length} project(s)`);
+
+// Re-render dashboard AFTER trackerData has been rebuilt for displayed projects
+renderReviewerDashboard(app);
 
     setText("trk-meta", `${projects.length} project(s)`);
     renderReviewerDashboard(app);
@@ -270,30 +300,33 @@ export function renderTracker(app, renderReviewerDashboard, openDetail) {
         });
     });
 
-    // === Calculate live Given Amount total ===
-    let totalGiven = 0;
-    projects.forEach(p => {
-        const amt = app.proposalAmounts[p];
-        const val = parseFloat((amt || "0").toString().replace(/[^0-9.-]/g, ""));
-        if (!isNaN(val)) totalGiven += val;
-    });
+    // === Calculate live Given Amount total (MATCHES FILTERED VIEW) ===
+let totalGiven = 0;
 
-    const totalGivenFormatted = "$" + totalGiven.toLocaleString(undefined, {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0
-    });
+// rowModels contains ONLY rows that passed filters/sort
+rowModels.forEach(r => {
+    const p = r.project;
+    const amt = app.proposalAmounts[p];
+    const val = parseFloat((amt || "0").toString().replace(/[^0-9.-]/g, ""));
+    if (!isNaN(val)) totalGiven += val;
+});
 
-    const amtHeader = document.querySelector('#trk-table thead th:nth-child(2) .th-inner');
-    if (amtHeader) {
-        amtHeader.innerHTML = `
-            <span class="text-muted" style="text-transform:uppercase; font-size:12px; letter-spacing:0.5px;">
-                G.Amt:
-            </span>
-            <span style="color: var(--amber); font-weight:800; font-size:12px; margin-left:6px;">
-                ${totalGivenFormatted}
-            </span>
-        `;
-    }
+const totalGivenFormatted = "$" + totalGiven.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+});
+
+const amtHeader = document.querySelector('#trk-table thead th:nth-child(2) .th-inner');
+if (amtHeader) {
+    amtHeader.innerHTML = `
+        <span class="text-muted" style="text-transform:uppercase; font-size:12px; letter-spacing:0.5px;">
+            G.Amt:
+        </span>
+        <span style="color: var(--amber); font-weight:800; font-size:12px; margin-left:6px;">
+            ${totalGivenFormatted}
+        </span>
+    `;
+}
 }
 
 // Window helper functions
