@@ -135,17 +135,17 @@ async function setUserRole(user) {
 function initLocalAuth() {
     if (USE_EMAIL_AUTH) return;
     const access = async () => {
-    const input = ($("pass")?.value || "").trim();
-    if (input === "eef2025") {
-        app.user = app.user || { displayName: "Local Tester", email: "local@test" };
-        app.role = "admin";
-        app.isAdmin = true;
-        app.adminConfig = app.adminConfig || {};
-        applyRoleGates();
-        showEl("auth", false);
-        $("user-pill") && ($("user-pill").textContent = "Local mode");
-        if (!bootPromise) {
-            bootPromise = boot();
+        const input = ($("pass")?.value || "").trim();
+        if (input === "eef2025") {
+            app.user = app.user || { displayName: "Local Tester", email: "local@test" };
+            app.role = "admin";
+            app.isAdmin = true;
+            app.adminConfig = app.adminConfig || {};
+            applyRoleGates();
+            showEl("auth", false);
+            $("user-pill") && ($("user-pill").textContent = "Local mode");
+            if (!bootPromise) {
+                bootPromise = boot();
             }
         } else {
             const err = $("authErr");
@@ -166,7 +166,7 @@ const app = {
     user: null,
     role: "member",
     isAdmin: false,
-    surveys: [], assignments: {}, // <- current dataset's assignments map
+    surveys: [], assignments: {},
     approved: { headers: ["Project Name", "Email", "Requested Amount", "Given Amount", "Funding Status", "Notes"], data: [] },
     proposalAmounts: {}, proposalNotes: {}, proposalStatus: {}, proposalDue: {},
     editingSurveyId: null, assigneeQuery: "",
@@ -233,7 +233,6 @@ async function boot() {
         $("tab-" + n).onclick = () => showSection(n);
     });
 
-    // Load tabs, UI config, and the reviewer directory used for email reminders
     const [tabs, ui, reviewerDirectory, adminConfig] = await Promise.all([
         storage.loadTabs(),
         storage.loadUIConfig(),
@@ -250,15 +249,14 @@ async function boot() {
         ? savedId
         : (app.tabs[0]?.id || null);
 
-    // Load everything *within* the selected dataset
-    await reloadCurrentDataset(); // fills surveys, assignments, approved, proposal meta
+    await reloadCurrentDataset();
 
     bindUI();
     renderAll();
     notify("EEF Manager Ready", "success");
 }
 
-// Reload only the active dataset's data (single implementation)
+// Reload only the active dataset's data
 async function reloadCurrentDataset() {
     const id = app.selectedId;
     if (!id) {
@@ -281,7 +279,7 @@ async function reloadCurrentDataset() {
     ]);
 
     app.surveys = surveys;
-    app.assignments = assignmentPayload.assignments || {}; // scoped to current dataset
+    app.assignments = assignmentPayload.assignments || {};
     app.assignmentOverflow = new Set(assignmentPayload.overflow || []);
     app.approved.data = approvedRows;
     app.proposalAmounts = meta.amounts;
@@ -322,7 +320,6 @@ function showSection(name) {
     if (name === "Admin" && app.isAdmin) renderAdminSettings();
 }
 
-// Make showSection globally accessible
 window.showSection = showSection;
 
 function renderAll() {
@@ -345,12 +342,11 @@ function renderAll() {
 }
 
 function renderAdminSettings() {
-    const emailsArea = $("admin-emails");
     const meta = $("admin-emails-meta");
-    const reviewersArea = $("admin-reviewers");
     const revMeta = $("admin-reviewer-meta");
     const emailList = $("admin-emails-list");
     const reviewerList = $("admin-reviewers-list");
+
     const emails = Array.isArray(app.adminConfig?.emails) ? app.adminConfig.emails : [];
     const dir = app.reviewerDirectory || {};
 
@@ -373,19 +369,58 @@ function renderAdminSettings() {
     if (reviewerList) {
         const entries = Object.entries(dir);
         if (!entries.length) {
-            reviewerList.innerHTML = `<div class="text-muted text-sm">No reviewers yet. Click "Add Reviewer".</div>`;
+            reviewerList.innerHTML = `<div class="text-muted text-sm">No reviewers yet. Click "Add Reviewer" or "Import Emails".</div>`;
         } else {
-            reviewerList.innerHTML = entries.map(([name, email]) => `
-                <div class="admin-row">
-                    <div><strong>${esc(name)}</strong><span class="text-muted" style="margin-left:8px">${esc(email || "")}</span></div>
-                    <div class="admin-row-actions">
-                        <button class="btn btn-xs" data-action="edit-reviewer" data-name="${attr(name)}" data-email="${attr(email || "")}">Edit</button>
-                        <button class="btn btn-xs btn-danger" data-action="delete-reviewer" data-name="${attr(name)}">Delete</button>
-                    </div>
-                </div>`).join("");
+            reviewerList.innerHTML = entries.map(([key, val]) => {
+                // Support BOTH formats:
+                // old: { "Name": "email" }
+                // new: { "email@x.com": { email, name:"" } }
+                const isObj = val && typeof val === "object";
+                const name = isObj ? (val.name || "") : key;
+                const email = isObj ? (val.email || "") : (val || "");
+                const displayName = name || "(name blank)";
+                return `
+                    <div class="admin-row">
+                        <div><strong>${esc(displayName)}</strong><span class="text-muted" style="margin-left:8px">${esc(email || "")}</span></div>
+                        <div class="admin-row-actions">
+                            <button class="btn btn-xs" data-action="edit-reviewer" data-name="${attr(key)}" data-email="${attr(email || "")}" data-rname="${attr(name || "")}">Edit</button>
+                            <button class="btn btn-xs btn-danger" data-action="delete-reviewer" data-name="${attr(key)}">Delete</button>
+                        </div>
+                    </div>`;
+            }).join("");
         }
     }
     if (revMeta) revMeta.textContent = `${Object.keys(dir).length} reviewer${Object.keys(dir).length === 1 ? "" : "s"}`;
+}
+
+async function importReviewerEmailsBlankNames() {
+    if (!app.isAdmin) return notify("Admin only", "error");
+
+    const dir = { ...(app.reviewerDirectory || {}) };
+    const emails = Array.isArray(app.adminConfig?.emails) ? app.adminConfig.emails : [];
+
+    let added = 0;
+    emails.forEach(raw => {
+        const email = String(raw || "").trim().toLowerCase();
+        if (!email) return;
+
+        // already present?
+        const already = Object.values(dir).some(v => {
+            if (!v) return false;
+            if (typeof v === "string") return v.toLowerCase() === email;
+            return (v.email || "").toLowerCase() === email;
+        });
+        if (already) return;
+
+        // store with blank name
+        dir[email] = { email, name: "" };
+        added++;
+    });
+
+    await storage.saveReviewerDirectory(dir);
+    app.reviewerDirectory = dir;
+    renderAdminSettings();
+    notify(`Imported ${added} email(s). Names left blank.`, "success");
 }
 
 function parseEmails(raw) {
@@ -395,66 +430,25 @@ function parseEmails(raw) {
         .filter(Boolean);
 }
 
-function parseReviewerDirectory(raw) {
-    const lines = (raw || "").split(/\n+/).map(l => l.trim()).filter(Boolean);
-    const dir = {};
-    lines.forEach(line => {
-        // allow "Name, email" or "Name <email>"
-        const emailMatch = line.match(/<([^>]+)>/);
-        let email = emailMatch ? emailMatch[1] : "";
-        if (!email) {
-            const parts = line.split(",").map(p => p.trim()).filter(Boolean);
-            if (parts.length >= 2) {
-                email = parts.pop();
-                const name = parts.join(", ");
-                if (name) dir[name] = email;
-                return;
-            }
-        }
-        if (email) {
-            const namePart = line.replace(emailMatch ? emailMatch[0] : email, "").replace(/[<>]/g, "").trim().replace(/,$/, "");
-            const name = namePart || email.split("@")[0];
-            if (name) dir[name] = email;
-        }
-    });
-    return dir;
-}
-
-async function saveAdminEmails() {
-    if (!app.isAdmin) return notify("Admin only", "error");
-    const raw = $("admin-emails")?.value || "";
-    const emails = parseEmails(raw);
-    await storage.saveAdminConfig({ emails });
-    app.adminConfig = app.adminConfig || {};
-    app.adminConfig.emails = emails;
-    renderAdminSettings();
-    notify("Admin emails saved", "success");
-}
-
-async function saveReviewerDirectory() {
-    if (!app.isAdmin) return notify("Admin only", "error");
-    const raw = $("admin-reviewers")?.value || "";
-    const dir = parseReviewerDirectory(raw);
-    await storage.saveReviewerDirectory(dir);
-    app.reviewerDirectory = dir;
-    renderAdminSettings();
-    notify("Reviewer directory saved", "success");
-}
-
 let adminModalMode = "admin";
 let adminEditKey = null;
+
 function openAdminEntryModal(mode = "admin", payload = {}) {
     adminModalMode = mode === "reviewer" ? "reviewer" : "admin";
     adminEditKey = payload?.key || null;
+
     const modal = $("admin-modal");
     if (!modal) return;
+
     const title = $("admin-modal-title");
     const subtitle = $("admin-modal-subtitle");
     const nameWrap = $("admin-name-wrap");
     const nameInput = $("admin-modal-name");
     const emailInput = $("admin-modal-email");
+
     if (nameInput) nameInput.value = payload?.name || "";
     if (emailInput) emailInput.value = payload?.email || "";
+
     if (adminModalMode === "admin") {
         if (title) title.textContent = "Add Admin Email";
         if (subtitle) subtitle.textContent = "Grant admin access by email";
@@ -464,6 +458,7 @@ function openAdminEntryModal(mode = "admin", payload = {}) {
         if (subtitle) subtitle.textContent = "Add a reviewer name and email";
         if (nameWrap) nameWrap.style.display = "";
     }
+
     modal.classList.remove("hidden");
     document.body.style.overflow = "hidden";
     (emailInput || nameInput)?.focus();
@@ -478,8 +473,10 @@ function closeAdminEntryModal() {
 
 async function saveAdminEntry() {
     if (!app.isAdmin) return notify("Admin only", "error");
+
     const email = ($("admin-modal-email")?.value || "").trim().toLowerCase();
     const name = ($("admin-modal-name")?.value || "").trim();
+
     if (!email) return notify("Email is required", "error");
 
     if (adminModalMode === "admin") {
@@ -497,17 +494,21 @@ async function saveAdminEntry() {
         renderAdminSettings();
         notify(adminEditKey ? "Admin email updated" : "Admin email added", "success");
     } else {
+        // Save reviewer directory in the NEW format: key can stay the same,
+        // but value should be { email, name }.
         const dir = { ...(app.reviewerDirectory || {}) };
-        const key = name || email.split("@")[0];
-        if (adminEditKey && adminEditKey !== key) {
-            delete dir[adminEditKey];
-        }
-        dir[key] = email;
+
+        const key = adminEditKey || (name || email.split("@")[0]) || email;
+
+        // Normalize existing entry to object
+        dir[key] = { email, name: name || "" };
+
         await storage.saveReviewerDirectory(dir);
         app.reviewerDirectory = dir;
         renderAdminSettings();
         notify(adminEditKey ? "Reviewer updated" : "Reviewer added", "success");
     }
+
     closeAdminEntryModal();
     adminEditKey = null;
 }
@@ -516,6 +517,7 @@ function handleAdminListClick(e) {
     const action = e.target?.dataset?.action;
     if (!action) return;
     const email = e.target.dataset.email || "";
+
     if (action === "edit-admin") {
         openAdminEntryModal("admin", { email, key: email });
     } else if (action === "delete-admin") {
@@ -525,6 +527,9 @@ function handleAdminListClick(e) {
             app.adminConfig.emails = next;
             renderAdminSettings();
             notify("Admin email removed", "success");
+        }).catch(err => {
+            console.error(err);
+            notify(err?.message || "Delete failed (Firestore rules?)", "error");
         });
     }
 }
@@ -532,18 +537,26 @@ function handleAdminListClick(e) {
 function handleReviewerListClick(e) {
     const action = e.target?.dataset?.action;
     if (!action) return;
-    const name = e.target.dataset.name || "";
+
+    const key = e.target.dataset.name || "";
     const email = e.target.dataset.email || "";
+    const rname = e.target.dataset.rname || "";
+
     if (action === "edit-reviewer") {
-        openAdminEntryModal("reviewer", { name, email, key: name });
+        openAdminEntryModal("reviewer", { name: rname, email, key });
     } else if (action === "delete-reviewer") {
         const dir = { ...(app.reviewerDirectory || {}) };
-        delete dir[name];
-        storage.saveReviewerDirectory(dir).then(() => {
-            app.reviewerDirectory = dir;
-            renderAdminSettings();
-            notify("Reviewer removed", "success");
-        });
+        delete dir[key];
+        storage.saveReviewerDirectory(dir)
+            .then(() => {
+                app.reviewerDirectory = dir;
+                renderAdminSettings();
+                notify("Reviewer removed", "success");
+            })
+            .catch(err => {
+                console.error(err);
+                notify(err?.message || "Delete failed (Firestore rules?)", "error");
+            });
     }
 }
 
@@ -576,12 +589,10 @@ function renderTop() {
 function applyRoleGates() {
     const isAdmin = !!app.isAdmin;
 
-    // Toggle admin-only elements
     document.querySelectorAll("[data-admin-only]").forEach(el => {
         el.style.display = isAdmin ? "" : "none";
     });
 
-    // Tabs and views
     const dataTab = $("tab-Data");
     const approvedTab = $("tab-Approved");
     const adminTab = $("tab-Admin");
@@ -596,7 +607,6 @@ function applyRoleGates() {
     if (approvedView && !isAdmin) approvedView.classList.add("hidden");
     if (adminView && !isAdmin) adminView.classList.add("hidden");
 
-    // If a non-admin somehow lands on an admin tab, bounce them back
     const activeTab = document.querySelector(".tabs button.active");
     const activeName = activeTab ? activeTab.id.replace("tab-", "") : app.currentView;
     if (!isAdmin && ADMIN_SECTIONS.has(activeName)) {
@@ -645,14 +655,11 @@ function bindUI() {
     $("svy-clr").onclick = () => { $("svy-filter").value = ""; renderSurvey(app, ""); };
     $("svy-exp").onclick = () => exportSurveys(app);
 
-    // Dataset selector with inline rename on double-click
+    // Dataset selector
     const sel = $("selDataset");
     if (sel) {
-        sel.onchange = async () => {
-            await switchDataset(sel.value);
-        };
+        sel.onchange = async () => { await switchDataset(sel.value); };
 
-        // Inline rename
         sel.addEventListener("dblclick", async () => {
             const tabId = sel.value;
             if (!tabId) return;
@@ -684,6 +691,7 @@ function bindUI() {
             });
         });
     }
+
     const dupBtn = $("dataset-duplicate");
     if (dupBtn) dupBtn.onclick = () => {
         if (!app.isAdmin) return notify("Admin only", "error");
@@ -694,6 +702,7 @@ function bindUI() {
         if (!app.isAdmin) return notify("Admin only", "error");
         toggleArchiveActiveDataset(app, renderTop);
     };
+
     const signOutBtn = $("signOut");
     if (signOutBtn) {
         if (USE_EMAIL_AUTH) signOutBtn.onclick = handleSignOut;
@@ -719,11 +728,7 @@ function bindUI() {
     const autoRun = $("auto-run");
     if (autoRun) autoRun.onclick = () => {
         if (!app.isAdmin) return notify("Admin only", "error");
-        runAutoAssign(
-            app,
-            refreshTracker,
-            () => renderDashboard(app)
-        );
+        runAutoAssign(app, refreshTracker, () => renderDashboard(app));
     };
     const autoClear = $("auto-clear");
     if (autoClear) autoClear.onclick = () => {
@@ -734,18 +739,26 @@ function bindUI() {
     // Admin settings
     const addAdminBtn = $("admin-emails-add");
     if (addAdminBtn) addAdminBtn.onclick = () => openAdminEntryModal("admin");
+
     const addReviewerBtn = $("admin-reviewers-add");
     if (addReviewerBtn) addReviewerBtn.onclick = () => openAdminEntryModal("reviewer");
+
+    const importBtn = $("admin-reviewers-import");
+    if (importBtn) importBtn.onclick = importReviewerEmailsBlankNames;
+
     const adminEmailList = $("admin-emails-list");
     if (adminEmailList) adminEmailList.onclick = handleAdminListClick;
+
     const reviewerList = $("admin-reviewers-list");
     if (reviewerList) reviewerList.onclick = handleReviewerListClick;
+
     ["admin-modal-close", "admin-modal-cancel"].forEach(id => {
         const btn = $(id);
         if (btn) btn.onclick = closeAdminEntryModal;
     });
     const adminModalSave = $("admin-modal-save");
     if (adminModalSave) adminModalSave.onclick = saveAdminEntry;
+
     $("trk-q").oninput = (e) => { app.assigneeQuery = (e.target.value || "").toLowerCase(); refreshTracker(); };
     $("trk-q-clr").onclick = () => { app.assigneeQuery = ""; $("trk-q").value = ""; refreshTracker(); };
 
@@ -753,8 +766,7 @@ function bindUI() {
     $("ap-exp").onclick = () => exportApproved(app);
     if ($("ap-remap")) $("ap-remap").onclick = () => remapApproved(app, renderApproved, renderDashboard);
 
-    // Combined header shadows on scroll (single handler)
-    document.addEventListener("scroll", (ev) => {
+    document.addEventListener("scroll", () => {
         const wrapTracker = document.querySelector("#view-Tracker .table-wrap");
         if (wrapTracker) wrapTracker.classList.toggle("scrolled", wrapTracker.scrollTop > 2);
         const wrapData = document.querySelector("#view-Data .table-wrap");
