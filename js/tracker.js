@@ -24,7 +24,7 @@ const DEFAULT_REVIEWERS = [
 
 // Global filter/sort state for tracker due date filter + sort
 let activeStatusFilters = new Set();
-let dueSort = null;
+let dueSort = "asc";
 let trkDateFilter = ""; // yyyy-mm-dd or empty (stored as local date)
 
 // Build status dropdown
