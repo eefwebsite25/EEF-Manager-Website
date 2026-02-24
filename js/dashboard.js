@@ -13,7 +13,7 @@ export function renderDashboard(app) {
     if (!tab) {
         setText("st-proposals", "0");
         setText("st-status", "0 / 0 / 0");
-        setText("st-notes", "0");
+        setText("st-notes", "$0");       // now Total Funding Requested
         setText("st-avg", "$0");
         setText("st-granted", "$0");
         return;
@@ -21,6 +21,7 @@ export function renderDashboard(app) {
 
     const rows = tab.data || [];
     let totalRequested = 0, reqCnt = 0;
+
     const amountKeys = [
         "Amount", "Requested Amount", "Amount Requested",
         "Total Requested", "Submission Amount", "Budget", "Q7",
@@ -30,18 +31,17 @@ export function renderDashboard(app) {
     for (const r of rows) {
         const key = amountKeys.find(k => r[k] != null && r[k] !== "");
         if (!key) continue;
-        const n = parseFloat(String(r[key]).replace(/[^0-9.\-]/g, ""));
-        if (!isNaN(n)) { totalRequested += n; reqCnt++; }
-    }
 
-    const notesCount = app.surveys.filter(s =>
-        (s.overall && s.overall.trim()) ||
-        (s.lineItems && s.lineItems.trim()) ||
-        (s.funding && s.funding.trim())
-    ).length;
+        const n = parseFloat(String(r[key]).replace(/[^0-9.\-]/g, ""));
+        if (!isNaN(n)) {
+            totalRequested += n;
+            reqCnt++;
+        }
+    }
 
     let full = 0, part = 0, none = 0;
     let totalGranted = 0;
+
     for (const r of app.approved.data || []) {
         const st = String(r["Funding Status"] || "").toLowerCase();
         if (st.includes("full")) full++;
@@ -54,8 +54,13 @@ export function renderDashboard(app) {
 
     setText("st-proposals", rows.length);
     setText("st-status", `${full} / ${part} / ${none}`);
-    setText("st-notes", notesCount);
+
+    // ✅ Replace notes submitted with total funding requested
+    setText("st-notes", "$" + Math.round(totalRequested).toLocaleString());
+
+    // keep avg submission amount (average requested per proposal)
     setText("st-avg", "$" + (reqCnt ? Math.round(totalRequested / reqCnt).toLocaleString() : "0"));
+
     setText("st-granted", "$" + Math.round(totalGranted).toLocaleString());
 }
 
