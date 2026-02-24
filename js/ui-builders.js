@@ -99,18 +99,16 @@ export function mountTrackerUI() {
                             </th>
                             <th>Actions</th>
                             <th class="header-menu" id="due-header">
-                                <div class="th-inner">Due Date</div>
-                                <div class="sort-popup" id="due-popup">
-                                    <div class="sort-popup-inner">
-                                        <label class="text-sm">Filter by date</label>
-                                        <select id="due-filter"></select>
-                                    </div>
-                                    <div class="sort-options">
-                                        <div class="sort-option" onclick="toggleDueSort('asc', this)">Ascending</div>
-                                        <div class="sort-option" onclick="toggleDueSort('desc', this)">Descending</div>
-                                    </div>
-                                </div>
-                            </th>
+    <div class="th-inner">Due Date</div>
+    <div class="sort-popup" id="due-popup">
+        <div class="sort-popup-inner">
+            <label class="text-sm">Filter by date</label>
+            <div class="due-select-wrap">
+                <select id="due-filter"></select>
+            </div>
+        </div>
+    </div>
+</th>
                         </tr>
                     </thead>
                     <tbody id="trk-body"></tbody>
