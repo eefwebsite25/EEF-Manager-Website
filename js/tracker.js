@@ -135,7 +135,7 @@ export function renderTracker(app, renderReviewerDashboard, openDetail) {
         const row = (tabLocal.data || []).find(r => String(r[matchLocal] || "").trim() === p) || {};
 
         const reqKey = ["Amount", "Requested Amount", "Amount Requested", "Total Requested",
-            "Submission Amount", "Budget", "Q7"]
+            "Submission Amount", "Budget", "Q7","Enter the total cost requested in your proposal"]
             .find(k => row[k] != null && row[k] !== "");
 
         const requested = reqKey
